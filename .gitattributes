@@ -1,0 +1,15 @@
+* text=auto
+
+*.jar binary
+*.so binary
+
+*.txt text
+*.java text
+*.md text
+*.sh text
+*.bat text
+
+.gitattributes text
+.classpath text
+.gitignore text
+.project text
