@@ -2,10 +2,11 @@
 
 err_report() {
 	echo "Error on line $1" >&2
+	exit 1
 }
 
 trap 'err_report $LINENO' ERR
 
-javac -classpath lib/*.jar Vision.java
+javac -classpath lib/*.jar src/Vision.java
 mkdir -p bin
-mv Vision.class bin
+mv src/*.class bin
