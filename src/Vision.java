@@ -22,7 +22,8 @@ public class Vision {
 		"Info",
 		"Debug"
 	}, WINDOW_TITLE="Vision";
-	private static int CAMERA_WIDTH=640, CAMERA_HEIGHT=480, GREEN_CHANNEL=1;
+	private static int CAMERA_WIDTH=640, CAMERA_HEIGHT=480, THRESHOLD=240;
+	private static Size SIZE=new Size(CAMERA_WIDTH, CAMERA_HEIGHT);
 
 	static {
 		System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
@@ -46,10 +47,38 @@ public class Vision {
 		System.exit(new Vision().loop(arg[0]));
 	}
 
+	public void resize(Mat frame) {
+		if (!frame.size().equals(SIZE))
+			Imgproc.resize(frame, frame, SIZE);
+	}
+
+	public void greenOnly(Mat frame) {
+		// leave only the green channel
+		// green channel is 1
+		Core.extractChannel(frame, frame, 1);
+	}
+
+	public void threshold(Mat frame) {
+		Imgproc.threshold(frame, frame, THRESHOLD, 255, Imgproc.THRESH_BINARY);
+	}
+
+	public void blur(Mat frame) {
+		double blurRadius = 0.9;
+		int radius=(int)(blurRadius+0.5), kernel_size=2*radius+1;
+
+		Imgproc.blur(frame, frame, new Size(kernel_size, kernel_size));
+	}
+
+	public void process(Mat frame) {
+		resize(frame);
+		greenOnly(frame);
+		threshold(frame);
+		blur(frame);
+	}
+
 	public int loop(String file) {
 		VideoCapture camera=new VideoCapture(file);
 		Mat frame=new Mat();
-		Size size=new Size(CAMERA_WIDTH, CAMERA_HEIGHT);
 		int total, frame_rate;
 		long time=0, now;
 
@@ -66,18 +95,12 @@ public class Vision {
 		info("Total frame count: "+total);
 
 		camera.read(frame);
-
-		if (!frame.size().equals(size))
-			Imgproc.resize(frame, frame, size);
-		Core.extractChannel(frame, frame, GREEN_CHANNEL);
+		process(frame);
 		HighGui.imshow(WINDOW_TITLE, frame);
 		HighGui.waitKey();
 
 		for (int count=2; count<=total && camera.read(frame); ++count) {
-			if (!frame.size().equals(size))
-				Imgproc.resize(frame, frame, size);
-			// leave only the green channel
-			Core.extractChannel(frame, frame, GREEN_CHANNEL);
+			process(frame);
 			HighGui.imshow(WINDOW_TITLE, frame);
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
