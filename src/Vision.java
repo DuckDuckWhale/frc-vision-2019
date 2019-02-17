@@ -1,6 +1,7 @@
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.highgui.HighGui;
@@ -69,11 +70,18 @@ public class Vision {
 		Imgproc.blur(frame, frame, new Size(kernel_size, kernel_size));
 	}
 
+	public void enrode(Mat frame) {
+		int iterations = 1;
+
+		Imgproc.erode(frame, frame, new Mat(), new Point(-1, -1), iterations, Core.BORDER_CONSTANT, new Scalar(-1));
+	}
+
 	public void process(Mat frame) {
 		resize(frame);
 		greenOnly(frame);
 		threshold(frame);
 		blur(frame);
+		enrode(frame);
 	}
 
 	public int loop(String file) {
