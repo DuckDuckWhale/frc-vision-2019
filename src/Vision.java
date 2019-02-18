@@ -1,6 +1,11 @@
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfPoint;
 import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -17,14 +22,14 @@ public class Vision {
 		DEBUG
 	}
 
-	private static String PREFIX[]={
+	private static final String PREFIX[]={
 		"Error",
 		"Warning",
 		"Info",
 		"Debug"
 	}, WINDOW_TITLE="Vision";
-	private static int CAMERA_WIDTH=640, CAMERA_HEIGHT=480, THRESHOLD=240;
-	private static Size SIZE=new Size(CAMERA_WIDTH, CAMERA_HEIGHT);
+	private static final int CAMERA_WIDTH=640, CAMERA_HEIGHT=480, THRESHOLD=240;
+	private static final double BLUR_RADIUS=0.9;
 
 	static {
 		System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
@@ -40,53 +45,42 @@ public class Vision {
 	public static void debug(String message) {log(LogLevel.DEBUG, message);}
 
 	public static void main(String[] arg) {
-		// forcefully exits the application due to the window not closing
 		if (arg.length!=1) {
 			error("Usage: vision [video]");
 			return;
 		}
+
+		// forcefully exits the application due to the window not closing
 		System.exit(new Vision().loop(arg[0]));
 	}
 
-	public void resize(Mat frame) {
-		if (!frame.size().equals(SIZE))
-			Imgproc.resize(frame, frame, SIZE);
-	}
-
-	public void greenOnly(Mat frame) {
-		// leave only the green channel
-		// green channel is 1
-		Core.extractChannel(frame, frame, 1);
-	}
-
-	public void threshold(Mat frame) {
-		Imgproc.threshold(frame, frame, THRESHOLD, 255, Imgproc.THRESH_BINARY);
-	}
-
-	public void blur(Mat frame) {
+	private void process(Mat frame, List<MatOfPoint> contours) {
 		double blurRadius = 0.9;
 		int radius=(int)(blurRadius+0.5), kernel_size=2*radius+1;
+		Size CAMERA_SIZE=new Size(CAMERA_WIDTH, CAMERA_HEIGHT), BLUR_SIZE=new Size(kernel_size, kernel_size);
 
-		Imgproc.blur(frame, frame, new Size(kernel_size, kernel_size));
-	}
-
-	public void enrode(Mat frame) {
-		int iterations = 1;
-
-		Imgproc.erode(frame, frame, new Mat(), new Point(-1, -1), iterations, Core.BORDER_CONSTANT, new Scalar(-1));
-	}
-
-	public void process(Mat frame) {
-		resize(frame);
-		greenOnly(frame);
-		threshold(frame);
-		blur(frame);
-		enrode(frame);
+		// resize
+		if (!frame.size().equals(CAMERA_SIZE))
+			Imgproc.resize(frame, frame, CAMERA_SIZE);
+		// leave only the green channel (channel 1)
+		Core.extractChannel(frame, frame, 1);
+		// threshold
+		Imgproc.threshold(frame, frame, THRESHOLD, 255, Imgproc.THRESH_BINARY);
+		// blur
+		Imgproc.blur(frame, frame, BLUR_SIZE);
+		// enrode, iteration=1
+		Imgproc.erode(frame, frame, new Mat(), new Point(-1, -1), 1, Core.BORDER_CONSTANT, new Scalar(-1));
+		// find contours
+		contours.clear();
+		Imgproc.findContours(frame, contours, new Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
+		// sort contours by area
+		contours.sort(Comparator.comparingDouble((MatOfPoint contour) -> Imgproc.contourArea(contour, false)).reversed());
 	}
 
 	public int loop(String file) {
 		VideoCapture camera=new VideoCapture(file);
 		Mat frame=new Mat();
+		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
 		int total, frame_rate;
 		long time=0, now;
 
@@ -103,12 +97,12 @@ public class Vision {
 		info("Total frame count: "+total);
 
 		camera.read(frame);
-		process(frame);
+		process(frame, contours);
 		HighGui.imshow(WINDOW_TITLE, frame);
 		HighGui.waitKey();
 
 		for (int count=2; count<=total && camera.read(frame); ++count) {
-			process(frame);
+			process(frame, contours);
 			HighGui.imshow(WINDOW_TITLE, frame);
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
