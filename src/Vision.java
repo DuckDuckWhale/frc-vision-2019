@@ -2,6 +2,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+import org.opencv.calib3d.Calib3d;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -46,26 +47,40 @@ public class Vision {
 
 	public static void printUsage() {
 		error("Usage:\n"
-				+"vision video <video>\n"
-				+"vision camera <index>");
+				+"vision video <video> <fisheye (true/false)>\n"
+				+"vision camera <index> <fisheye (true/false)>");
 	}
 
 	public static void main(String[] arg) {
-		if (arg.length!=2) {
+		if (arg.length!=3) {
 			printUsage();
 			return;
 		}
 
 		Vision vision=new Vision();
 		int result;
+		boolean fisheye;
 
+		switch (arg[2]) {
+			case "true":
+				fisheye=true;
+				break;
+			case "false":
+				fisheye=false;
+				break;
+			default:
+				error("The fisheye parameter is not a boolean.");
+				System.exit(1);
+				return;
+		}
+				
 		switch (arg[0]) {
 			case "video":
-				result=vision.loop(arg[1]);
+				result=vision.loop(arg[1], fisheye);
 				break;
 			case "camera":
 				try {
-					result=vision.loop(Integer.parseInt(arg[1]));
+					result=vision.loop(Integer.parseInt(arg[1]), fisheye);
 				} catch (NumberFormatException e) {
 					error("The index is not a valid integer.");
 					result=1;
@@ -81,7 +96,18 @@ public class Vision {
 		System.exit(result);
 	}
 
-	private void process(Mat frame, List<MatOfPoint> contours) {
+	private void adjustForFisheye(Mat frame) {
+		Mat k=new Mat(3, 3, CvType.CV_64FC1), d=new Mat(2, 2, CvType.CV_64FC1), map_1=new Mat(), map_2=new Mat();
+
+		k.put(0, 0, 272.2831082345223, 0.0, 330.5055386901159, 0.0, 272.06956412226043, 198.95483961693228, 0.0, 0.0, 1.0);
+		d.put(0, 0, -0.03635131955587948, -0.02746289182992547, 0.03422666268794602, -0.0164632465730478);
+
+		Calib3d.fisheye_initUndistortRectifyMap(k, d, Mat.eye(3, 3, CvType.CV_64FC1), k, new Size(CAMERA_WIDTH, CAMERA_HEIGHT), CvType.CV_16SC2,
+				map_1, map_2);
+		Imgproc.remap(frame, frame, map_1, map_2, Imgproc.INTER_LINEAR, Core.BORDER_CONSTANT);
+	}
+
+	private void process(Mat frame, List<MatOfPoint> contours, boolean fisheye) {
 		double blurRadius = 0.9;
 		int radius=(int)(blurRadius+0.5), kernel_size=2*radius+1;
 		Size CAMERA_SIZE=new Size(CAMERA_WIDTH, CAMERA_HEIGHT), BLUR_SIZE=new Size(kernel_size, kernel_size);
@@ -91,6 +117,8 @@ public class Vision {
 			Imgproc.resize(frame, frame, CAMERA_SIZE);
 		// leave only the green channel (channel 1)
 		Core.extractChannel(frame, frame, 1);
+		// adjustments for the fisheye
+		if (fisheye) adjustForFisheye(frame);
 		// threshold
 		Imgproc.threshold(frame, frame, THRESHOLD, 255, Imgproc.THRESH_BINARY);
 		// blur
@@ -104,7 +132,7 @@ public class Vision {
 		contours.sort(Comparator.comparingDouble((MatOfPoint contour) -> Imgproc.contourArea(contour, false)).reversed());
 	}
 
-	public int loop(int index) {
+	public int loop(int index, boolean fisheye) {
 		VideoCapture camera=new VideoCapture(index);
 		Mat frame=new Mat();
 		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
@@ -121,7 +149,7 @@ public class Vision {
 		frame_rate=(int)camera.get(Videoio.CAP_PROP_FPS);
 		info("Frame rate: "+frame_rate);
 		for (int count=2; camera.read(frame); ++count) {
-			process(frame, contours);
+			process(frame, contours, fisheye);
 			HighGui.imshow(WINDOW_TITLE, frame);
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
@@ -136,7 +164,7 @@ public class Vision {
 		return 0;
 	}
 
-	public int loop(String file) {
+	public int loop(String file, boolean fisheye) {
 		VideoCapture camera=new VideoCapture(file);
 		Mat frame=new Mat();
 		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
@@ -156,12 +184,12 @@ public class Vision {
 		info("Total frame count: "+total);
 
 		camera.read(frame);
-		process(frame, contours);
+		process(frame, contours, fisheye);
 		HighGui.imshow(WINDOW_TITLE, frame);
 		HighGui.waitKey();
 
 		for (int count=2; count<=total && camera.read(frame); ++count) {
-			process(frame, contours);
+			process(frame, contours, fisheye);
 			HighGui.imshow(WINDOW_TITLE, frame);
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
