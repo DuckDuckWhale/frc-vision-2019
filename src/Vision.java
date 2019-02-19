@@ -44,14 +44,41 @@ public class Vision {
 	public static void info(String message) {log(LogLevel.INFO, message);}
 	public static void debug(String message) {log(LogLevel.DEBUG, message);}
 
+	public static void printUsage() {
+		error("Usage:\n"
+				+"vision video <video>\n"
+				+"vision camera <index>");
+	}
+
 	public static void main(String[] arg) {
-		if (arg.length!=1) {
-			error("Usage: vision [video]");
+		if (arg.length!=2) {
+			printUsage();
 			return;
 		}
 
-		// forcefully exits the application due to the window not closing
-		System.exit(new Vision().loop(arg[0]));
+		Vision vision=new Vision();
+		int result;
+
+		switch (arg[0]) {
+			case "video":
+				result=vision.loop(arg[1]);
+				break;
+			case "camera":
+				try {
+					result=vision.loop(Integer.parseInt(arg[1]));
+				} catch (NumberFormatException e) {
+					error("The index is not a valid integer.");
+					result=1;
+				}
+				break;
+			default:
+				printUsage();
+				result=1;
+		}
+
+		// forcefully exits the application
+		// the window will not close if System.exit() is called
+		System.exit(result);
 	}
 
 	private void process(Mat frame, List<MatOfPoint> contours) {
@@ -75,6 +102,38 @@ public class Vision {
 		Imgproc.findContours(frame, contours, new Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
 		// sort contours by area
 		contours.sort(Comparator.comparingDouble((MatOfPoint contour) -> Imgproc.contourArea(contour, false)).reversed());
+	}
+
+	public int loop(int index) {
+		VideoCapture camera=new VideoCapture(index);
+		Mat frame=new Mat();
+		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
+		int total, frame_rate;
+		long time=0, now;
+
+		if (!camera.isOpened()) {
+			error("Camera can't be opened!");
+			return 1;
+		}
+
+		camera.set(Videoio.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH);
+		camera.set(Videoio.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT);
+		frame_rate=(int)camera.get(Videoio.CAP_PROP_FPS);
+		info("Frame rate: "+frame_rate);
+		for (int count=2; camera.read(frame); ++count) {
+			process(frame, contours);
+			HighGui.imshow(WINDOW_TITLE, frame);
+			now=System.currentTimeMillis();
+			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
+			time=now;
+			debug(Integer.toString(count));
+		}
+
+		frame.release();
+		camera.release();
+		HighGui.destroyAllWindows();
+
+		return 0;
 	}
 
 	public int loop(String file) {
