@@ -1,12 +1,14 @@
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.opencv.calib3d.Calib3d;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
+import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -30,10 +32,17 @@ public class Vision {
 		"Debug"
 	}, WINDOW_TITLE="Vision";
 	private static final int CAMERA_WIDTH=640, CAMERA_HEIGHT=480, THRESHOLD=240;
-	private static final double BLUR_RADIUS=0.9;
+	private static final double BLUR_RADIUS=0.9, MIN_CONTOUR_AREA=100, MAX_CONTOUR_AREA=7000;
+
+	private final boolean FISHEYE, DEBUG;
 
 	static {
 		System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+	}
+
+	public Vision(boolean fisheye, boolean debug) {
+		FISHEYE=fisheye;
+		DEBUG=debug;
 	}
 
 	public static void log(LogLevel level, String message) {
@@ -47,40 +56,54 @@ public class Vision {
 
 	public static void printUsage() {
 		error("Usage:\n"
-				+"vision video <video> <fisheye (true/false)>\n"
-				+"vision camera <index> <fisheye (true/false)>");
+				+"vision video <video> <fisheye (true/false)> <debug (true/false)>\n"
+				+"vision camera <index> <fisheye (true/false)> <debug (true/false)>");
+	}
+
+	/**
+	 * Returns the boolean {@code str} represents and exits with status 1 and an error message if it is invalid.
+	 *
+	 * @param str the boolean in String form
+	 * @param msg the error message to be output if {@code str} is invalid
+	 */
+	public static boolean getBoolean(String str, String msg) {
+		switch (str) {
+			case "true":
+				return true;
+			case "false":
+				return false;
+			default:
+				throw new IllegalArgumentException(msg);
+		}
 	}
 
 	public static void main(String[] arg) {
-		if (arg.length!=3) {
+		Thread.setDefaultUncaughtExceptionHandler((thread, e) -> {
+			error(e.toString());
+			System.exit(1);
+		});
+
+		if (arg.length!=4) {
 			printUsage();
 			return;
 		}
 
-		Vision vision=new Vision();
+		Vision vision;
 		int result;
-		boolean fisheye;
+		boolean fisheye, debug;
 
-		switch (arg[2]) {
-			case "true":
-				fisheye=true;
-				break;
-			case "false":
-				fisheye=false;
-				break;
-			default:
-				error("The fisheye parameter is not a boolean.");
-				System.exit(1);
-				return;
-		}
+		fisheye=getBoolean(arg[2], "The fisheye parameter is not a boolean.");
+		debug=getBoolean(arg[3], "The debug parameter is not a boolean.");
+
+		vision=new Vision(fisheye, debug);
 				
 		switch (arg[0]) {
 			case "video":
-				result=vision.loop(arg[1], fisheye);
+				result=vision.loop(arg[1]);
 				break;
 			case "camera":
 				try {
-					result=vision.loop(Integer.parseInt(arg[1]), fisheye);
+					result=vision.loop(Integer.parseInt(arg[1]));
 				} catch (NumberFormatException e) {
 					error("The index is not a valid integer.");
 					result=1;
@@ -107,7 +130,7 @@ public class Vision {
 		Imgproc.remap(frame, frame, map_1, map_2, Imgproc.INTER_LINEAR, Core.BORDER_CONSTANT);
 	}
 
-	private void process(Mat frame, List<MatOfPoint> contours, boolean fisheye) {
+	private void process(Mat frame, List<MatOfPoint> contours) {
 		double blurRadius = 0.9;
 		int radius=(int)(blurRadius+0.5), kernel_size=2*radius+1;
 		Size CAMERA_SIZE=new Size(CAMERA_WIDTH, CAMERA_HEIGHT), BLUR_SIZE=new Size(kernel_size, kernel_size);
@@ -118,21 +141,46 @@ public class Vision {
 		// leave only the green channel (channel 1)
 		Core.extractChannel(frame, frame, 1);
 		// adjustments for the fisheye
-		if (fisheye) adjustForFisheye(frame);
+		if (FISHEYE) adjustForFisheye(frame);
 		// threshold
 		Imgproc.threshold(frame, frame, THRESHOLD, 255, Imgproc.THRESH_BINARY);
 		// blur
 		Imgproc.blur(frame, frame, BLUR_SIZE);
 		// enrode, iteration=1
 		Imgproc.erode(frame, frame, new Mat(), new Point(-1, -1), 1, Core.BORDER_CONSTANT, new Scalar(-1));
+
 		// find contours
 		contours.clear();
 		Imgproc.findContours(frame, contours, new Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
-		// sort contours by area
-		contours.sort(Comparator.comparingDouble((MatOfPoint contour) -> Imgproc.contourArea(contour, false)).reversed());
+		contours=contours.stream()
+			// filter by area
+			.filter(contour -> {
+				double area=Imgproc.contourArea(contour, false);
+				
+				return MIN_CONTOUR_AREA<=area && area<=MAX_CONTOUR_AREA;
+			})
+			// find the rectangles
+			.map(contour -> {
+				MatOfPoint2f test_contour=new MatOfPoint2f(), approx_contour=new MatOfPoint2f();
+				MatOfPoint approx=new MatOfPoint();
+
+				contour.convertTo(test_contour, CvType.CV_32FC2);
+				Imgproc.approxPolyDP(test_contour, approx_contour, 0.05*Imgproc.arcLength(test_contour, true), true);
+				if (DEBUG) debug("approx_contour_arc_length="+Imgproc.arcLength(test_contour, true));
+				approx_contour.convertTo(approx, CvType.CV_32S);
+				
+				return approx;
+			})
+			.filter(contour -> contour.size().height==4)
+			// sort contours by area
+			.sorted(Comparator.comparingDouble((MatOfPoint contour) -> Imgproc.contourArea(contour, false)).reversed())
+			.collect(Collectors.toList());
+
+		// draw contours
+		if (DEBUG) Imgproc.drawContours(frame, contours, -1, new Scalar(128, 255, 128), 5);
 	}
 
-	public int loop(int index, boolean fisheye) {
+	public int loop(int index) {
 		VideoCapture camera=new VideoCapture(index);
 		Mat frame=new Mat();
 		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
@@ -149,12 +197,11 @@ public class Vision {
 		frame_rate=(int)camera.get(Videoio.CAP_PROP_FPS);
 		info("Frame rate: "+frame_rate);
 		for (int count=2; camera.read(frame); ++count) {
-			process(frame, contours, fisheye);
+			process(frame, contours);
 			HighGui.imshow(WINDOW_TITLE, frame);
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
 			time=now;
-			debug(Integer.toString(count));
 		}
 
 		frame.release();
@@ -164,7 +211,7 @@ public class Vision {
 		return 0;
 	}
 
-	public int loop(String file, boolean fisheye) {
+	public int loop(String file) {
 		VideoCapture camera=new VideoCapture(file);
 		Mat frame=new Mat();
 		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
@@ -184,17 +231,16 @@ public class Vision {
 		info("Total frame count: "+total);
 
 		camera.read(frame);
-		process(frame, contours, fisheye);
+		process(frame, contours);
 		HighGui.imshow(WINDOW_TITLE, frame);
 		HighGui.waitKey();
 
 		for (int count=2; count<=total && camera.read(frame); ++count) {
-			process(frame, contours, fisheye);
+			process(frame, contours);
 			HighGui.imshow(WINDOW_TITLE, frame);
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
 			time=now;
-			debug(Integer.toString(count));
 		}
 
 		frame.release();
