@@ -184,8 +184,8 @@ public class Vision {
 		VideoCapture camera=new VideoCapture(index);
 		Mat frame=new Mat();
 		ArrayList<MatOfPoint> contours=new ArrayList<MatOfPoint>();
-		int total, frame_rate;
-		long time=0, now;
+		int total, frame_rate, frame_count=0;
+		long time=0, now, last=System.currentTimeMillis();
 
 		if (!camera.isOpened()) {
 			error("Camera can't be opened!");
@@ -197,11 +197,22 @@ public class Vision {
 		frame_rate=(int)camera.get(Videoio.CAP_PROP_FPS);
 		info("Frame rate: "+frame_rate);
 		for (int count=2; camera.read(frame); ++count) {
+			// vision processing
 			process(frame, contours);
 			HighGui.imshow(WINDOW_TITLE, frame);
+
+			// wait for display
 			now=System.currentTimeMillis();
 			HighGui.waitKey((int)Math.max(1, 1000/frame_rate-(now-time)));
 			time=now;
+			
+			// calculate real time frame rate
+			++frame_count;
+			if (now-last>=1000) {
+				info("Frame rate: "+(double)frame_count/(now-last)*1000);
+				last=now;
+				frame_count=0;
+			}
 		}
 
 		frame.release();
